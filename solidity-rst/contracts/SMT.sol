@@ -7,8 +7,8 @@ pragma solidity ^0.8.17;
 /// optimize the SMT according to Rust version SMT(https://github.com/rooch-network/smt)
 library SMT {
     // in Solidity: SMT.create_literal_hash("SPARSE_MERKLE_PLACEHOLDER_HASH")
-    bytes32 constant public PLACE_HOLDER = 0x5350415253455f4d45524b4c455f504c414345484f4c4445525f484153480000;
-    
+    bytes32 public constant PLACE_HOLDER =
+        0x5350415253455f4d45524b4c455f504c414345484f4c4445525f484153480000;
 
     struct RollUp {
         bytes32 root;
@@ -23,8 +23,25 @@ library SMT {
         bytes32 mergedLeaves;
     }
 
-    struct Proof{
+    struct Proof {
         bytes32[256] siblings;
+    }
+
+    function reverseBits(
+        bytes memory input
+    ) internal pure returns (bytes memory) {
+        bytes memory result = new bytes(input.length);
+        for (uint i = 0; i < input.length; i++) {
+            result[i] = input[input.length - 1 - i];
+        }
+        return result;
+    }
+
+    function cryptoInternalNodeHash(
+        bytes32 left,
+        bytes32 right
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(left, right));
     }
 
     function inclusionProof(
@@ -32,7 +49,7 @@ library SMT {
         bytes32 key,
         bytes32 value,
         bytes32[256] memory siblings
-    ) internal pure returns(bool) {
+    ) internal pure returns (bool) {
         return merkleProof(root, key, value, siblings);
     }
 
@@ -40,7 +57,7 @@ library SMT {
         bytes32 root,
         bytes32 key,
         bytes32[256] memory siblings
-    ) internal pure returns(bool) {
+    ) internal pure returns (bool) {
         //TODO check the proof is valid
         return true;
         //return merkleProof(root, key, PLACE_HOLDER, siblings);
@@ -51,8 +68,11 @@ library SMT {
         bytes32 key,
         bytes32 value,
         bytes32[256] memory siblings
-    ) internal pure returns(bool) {
-        require(calculateRoot(key, value, siblings) == root, "Invalid merkle proof");
+    ) internal pure returns (bool) {
+        require(
+            calculateRoot(key, value, siblings) == root,
+            "Invalid merkle proof"
+        );
         return true;
     }
 
@@ -77,33 +97,51 @@ library SMT {
         return cursor;
     }
 
+    function bytesToBoolArray(
+        bytes memory data
+    ) internal pure returns (bool[] memory) {
+        bool[] memory bitsArray = new bool[](data.length * 8);
+        for (uint i = 0; i < data.length; i++) {
+            for (uint j = 0; j < 8; j++) {
+                bitsArray[i * 8 + j] = (data[i] & (1 << j)) != 0;
+            }
+        }
+        return bitsArray;
+    }
+
     function calculateRootV2(
+        bytes32 root,
         bytes32 key,
         bytes32 value,
         bytes32[256] memory siblings
     ) internal pure returns (bytes32) {
-         uint256 siblingLen = siblings.length;
+        uint256 siblingLen = siblings.length;
 
         // 将元素的密钥和值组合在一起，并用字节表示成位序列
         bytes memory element = abi.encodePacked(key, value);
         bytes memory elementBits = reverseBits(element);
 
         // 截取位数组，去掉最后 siblingLen 位（用于确定兄弟节点的方向）
-        bool[] memory skipedElementBits = new bool[](elementBits.length - siblingLen);
+        bool[] memory skipedElementBits = new bool[](
+            elementBits.length - siblingLen
+        );
         for (uint i = 0; i < skipedElementBits.length; i++) {
-            skipedElementBits[i] = element
+            skipedElementBits[i] = elementBits[i];
         }
         bytes32 resultHash = root;
         for (uint i = 0; i < siblingLen; i++) {
             bool bit = skipedElementBits[i];
             bytes32 siblingHash = siblings[i];
 
-            if (bit) { // right
+            if (bit) {
+                // right
                 resultHash = cryptoInternalNodeHash(siblingHash, resultHash);
-            } else { // left
+            } else {
+                // left
                 resultHash = cryptoInternalNodeHash(resultHash, siblingHash);
             }
         }
+        return resultHash; // 返回计算的结果
     }
 
     function append(
@@ -113,7 +151,10 @@ library SMT {
         bytes32[256] memory siblings
     ) internal pure returns (bytes32 nextRoot) {
         // Prove that the array of sibling is valid and also the key does not exist in the tree
-        require(nonInclusionProof(root, key, siblings), "Failed to build the previous root using jthe leaf and its sibling");
+        require(
+            nonInclusionProof(root, key, siblings),
+            "Failed to build the previous root using jthe leaf and its sibling"
+        );
         // Calculate the new root when the leaf exists using its proven siblings
         nextRoot = calculateRoot(key, value, siblings);
         // Make sure it has been updated
@@ -122,12 +163,20 @@ library SMT {
 
     function rollUp(RollUp memory proof) internal pure returns (bytes32) {
         // Inspect the RollUp structure
-        require(proof.keys.length == proof.siblings.length, "Both array should have same length");
+        require(
+            proof.keys.length == proof.siblings.length,
+            "Both array should have same length"
+        );
         // Start from the root
         bytes32 root = proof.root;
         // Update the root using append function
-        for (uint i = 0; i < proof.keys.length; i ++) {
-            root = append(root, proof.keys[i], proof.values[i], proof.siblings[i]);
+        for (uint i = 0; i < proof.keys.length; i++) {
+            root = append(
+                root,
+                proof.keys[i],
+                proof.values[i],
+                proof.siblings[i]
+            );
         }
         return root;
     }
@@ -148,20 +197,26 @@ library SMT {
         bytes32[] memory values,
         bytes32[256][] memory siblings
     ) internal pure returns (bool) {
-        require(nextRoot == rollUp(RollUp(root, keys, values, siblings)), "Failed to drive the next root from the proof");
+        require(
+            nextRoot == rollUp(RollUp(root, keys, values, siblings)),
+            "Failed to drive the next root from the proof"
+        );
     }
 
-    function newOPRU(bytes32 startingRoot) internal pure returns (OPRU memory opru) {
+    function newOPRU(
+        bytes32 startingRoot
+    ) internal pure returns (OPRU memory opru) {
         opru.prev = startingRoot;
         opru.next = startingRoot;
         opru.mergedLeaves = bytes32(0);
     }
-    
+
     function update(
         OPRU storage opru,
         bytes32 key,
         bytes32 value,
-        bytes32[256] memory siblings) internal {
+        bytes32[256] memory siblings
+    ) internal {
         bytes32[] memory keys = new bytes32[](1);
         keys[0] = key;
         bytes32[] memory values = new bytes32[](1);
@@ -197,7 +252,7 @@ library SMT {
         bytes32[] memory leaves
     ) internal pure returns (bytes32 mergedLeaves) {
         mergedLeaves = base;
-        for(uint i = 0; i < leaves.length; i++) {
+        for (uint i = 0; i < leaves.length; i++) {
             mergedLeaves = keccak256(abi.encodePacked(mergedLeaves, leaves[i]));
         }
     }
@@ -209,5 +264,4 @@ library SMT {
         bytes32 hash_result = bytes32(abi.encodePacked(value));
         return hash_result;
     }
-    
 }

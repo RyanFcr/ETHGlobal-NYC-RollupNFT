@@ -44,7 +44,7 @@ library NFTObject {
         string[] memory attributes_value
     ) internal pure returns (Metadata memory) {
         bytes32 id = keccak256(
-            abi.encodePacked(
+            abi.encode(
                 name,
                 description,
                 image,
